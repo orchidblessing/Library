@@ -7,7 +7,7 @@ public interface LibraryService {
     void addUser(String userName, Integer age, String email);
     void borrowBook(String username, String bookName);
     void returnBook(String username, String bookName);
-    int delBook(String bookName);
+    void delBook(String bookName);
     void queryBook(String bookName);
     void queryBookByAuthor(String author);
     void queryMyBorrowBook(String username);

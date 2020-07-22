@@ -4,6 +4,7 @@ import com.orchidblessing.library.domain.PreparedParamDomain;
 import com.orchidblessing.library.entity.Book;
 import com.orchidblessing.library.entity.BorrowRecord;
 import com.orchidblessing.library.entity.User;
+import com.orchidblessing.library.util.ConnectionUtils;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -18,48 +19,67 @@ public class DataBaseUtils {
     private static final String user = "root";
     private static final String password = "";
     private static final String driverClass = "com.mysql.jdbc.Driver";
-    public static Connection connection;
+
+    private static final List<Connection> connections = new ArrayList();
+
+    private static final int max_connection = 3;
 
     static {
         try {
             //加载驱动
             Class.forName(driverClass);
             //2.获取连接：java程序到数据库服务器之间的TCP/IP连接通道
-            connection = DriverManager.getConnection(url, user, password);
+            //直接创建3个connection
+            for(int i=0;i<max_connection;i++) {
+                connections.add(DriverManager.getConnection(url, user, password));
+            }
         } catch (Exception e) {
             e.printStackTrace();
         }
     }
 
-    /**
-     * @Description: 通用更新语句
-     * @Author: Edmond Wang
-     * @Date: 2020/7/11 11:21
-     */
-    public static int addBook(String bookName, String author, String press, BigDecimal price, int stock) {
-        int rows = 0;
-        PreparedStatement ps = null;
-        String sql = "insert into lib_book(book_name,author,press,price,stock) value(?,?,?,?,?);";
+    //用于获取service层放进来的connection，不用担心别的线程拿走，因为单个线程是线性的
+    public static Connection getConnection(boolean autoCommit) {
+        Connection connection = null;
         try {
-            //3.预编译sql语句
-            ps = connection.prepareStatement(sql);
-            //4.填充占位符
-            ps.setObject(1,bookName);
-            ps.setObject(2,author);
-            ps.setObject(3,press);
-            ps.setObject(4,price);
-            ps.setObject(5,stock);
-            //5.执行
-            rows = ps.executeUpdate();
+            //TODO 这里不太对吧，直接创建了3个connection，但是每次都拿第一个
+            connection = connections.get(0);
+            connection.setAutoCommit(autoCommit);
         } catch (Exception e) {
             e.printStackTrace();
         }
-        System.out.println("影响行数：" + rows);
-
-        return rows;
+        return connection;
     }
+
+
+      //用传参的方法不通用
+//    public static int addBook(String bookName, String author, String press, BigDecimal price, int stock) {
+//        Connection connection = ConnectionUtils.connectionThreadLocal.get();
+//        int rows = 0;
+//        PreparedStatement ps = null;
+//        String sql = "insert into lib_book(book_name,author,press,price,stock) value(?,?,?,?,?);";
+//        try {
+//            //3.预编译sql语句
+//            ps = connection.prepareStatement(sql);
+//            //4.填充占位符
+//            ps.setObject(1,bookName);
+//            ps.setObject(2,author);
+//            ps.setObject(3,press);
+//            ps.setObject(4,price);
+//            ps.setObject(5,stock);
+//            //5.执行
+//            rows = ps.executeUpdate();
+//        } catch (Exception e) {
+//            e.printStackTrace();
+//        }
+//        System.out.println("影响行数：" + rows);
+//
+//        return rows;
+//    }
 
     public static int addUser(String userName, Integer age, String email) {
+        //TODO 这里get到之后，线程池里的还有吧，怎么办
+        Connection connection = ConnectionUtils.connectionThreadLocal.get();
         int rows = 0;
         PreparedStatement ps = null;
         String sql = "insert into lib_user(username,age,email) value(?,?,?);";
@@ -81,8 +101,79 @@ public class DataBaseUtils {
         return rows;
     }
 
-    //传进来sql和键值对集合
-    public static int commonUpdateSql(String sql, List<PreparedParamDomain> params) {
+    //通过username查询User对象
+    public static User queryUser(String username) {
+        Connection connection = ConnectionUtils.connectionThreadLocal.get();
+        User user = null;
+        String sql = "select id,username,age,email from lib_user where username = ?";
+
+        try {
+            //预编译sql语句
+            PreparedStatement ps = connection.prepareStatement(sql);
+            //填充sql语句
+            ps.setObject(1,username);
+            //执行sql语句并返回结果集
+            ResultSet resultSet = ps.executeQuery();
+            //用while处理结果集
+            while(resultSet.next()) {
+                int id = resultSet.getInt("id");
+                username = resultSet.getString("username");
+                int age = resultSet.getInt("age");
+                String email = resultSet.getString("email");
+                user = new User();
+                user.setId(id);
+                user.setUsername(username);
+                user.setAge(age);
+                user.setEmail(email);
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return user;
+    }
+
+    //通过bookName查询book对象，用手动的方法，给对象的每一个成员变量赋值，因为事先已经知道在查book
+    public static Book queryBook(String bookName) {
+        Connection connection = ConnectionUtils.connectionThreadLocal.get();
+        Book book = null;
+        String sql = "select id,book_name as bookName,author,press,price,stock,borrow_count as borrowCount from lib_book where book_name = ?";
+
+        try {
+            //预编译sql语句
+            PreparedStatement ps = connection.prepareStatement(sql);
+            //填充sql语句
+            ps.setObject(1,bookName);
+            //执行sql语句并返回结果集
+            ResultSet resultSet = ps.executeQuery();
+            //用while处理结果集
+            while(resultSet.next()) {
+                int id = resultSet.getInt("id");
+                bookName = resultSet.getString("bookName");
+                String author = resultSet.getString("author");
+                String press = resultSet.getString("press");
+                BigDecimal price = resultSet.getBigDecimal("price");
+                int stock = resultSet.getInt("stock");
+                int borrowCount = resultSet.getInt("borrowCount");
+
+                book = new Book();
+                book.setId(id);
+                book.setBookName(bookName);
+                book.setAuthor(author);
+                book.setPress(press);
+                book.setPrice(price);
+                book.setStock(stock);
+                book.setBorrowCount(borrowCount);
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return book;
+    }
+
+
+    //传进来sql和键值对集合，运用键值对来填充sql语句；用于addBook
+    public static int commonUpdate(String sql, List<PreparedParamDomain> params) {
+        Connection connection = ConnectionUtils.connectionThreadLocal.get();
         int rows = 0;
         boolean insertFlag = false;
         try {
@@ -124,6 +215,7 @@ public class DataBaseUtils {
     }
 
     public static int reduceStock(String bookName) {
+        Connection connection = ConnectionUtils.connectionThreadLocal.get();
         int reduceBookRows = 0;
         PreparedStatement reduceStockPs = null;
         String reduceStockSql = "update lib_book set stock=stock-1,borrow_count=borrow_count+1 where book_name=?";
@@ -142,6 +234,7 @@ public class DataBaseUtils {
     }
 
     public static int insertBorrowRecord(String username, String bookName) {
+        Connection connection = ConnectionUtils.connectionThreadLocal.get();
         //初始化影响行数和preparedStatement
         int insertBorrowRecordRows = 0;
         PreparedStatement insertBorrowRecordPs = null;
@@ -163,6 +256,7 @@ public class DataBaseUtils {
     }
 
     public static int updateBorrowRecord(int userId, int bookId) {
+        Connection connection = ConnectionUtils.connectionThreadLocal.get();
         //初始化影响行数和preparedStatement
         int updateBorrowRecordRows = 0;
         PreparedStatement updateBorrowRecordPs = null;
@@ -184,6 +278,7 @@ public class DataBaseUtils {
 
     //还书的时候用
     public static int increaseStock(String bookName) {
+        Connection connection = ConnectionUtils.connectionThreadLocal.get();
         //初始化影响行数和preparedStatement
         int rows = 0;
         PreparedStatement increaseStockPs = null;
@@ -205,75 +300,10 @@ public class DataBaseUtils {
     }
 
 
-    //通过username查询User对象
-    public static User queryUser(String username) {
-        User user = null;
-        String sql = "select id,username,age,email from lib_user where username = ?";
-
-        try {
-            //预编译sql语句
-            PreparedStatement ps = connection.prepareStatement(sql);
-            //填充sql语句
-            ps.setObject(1,username);
-            //执行sql语句并返回结果集
-            ResultSet resultSet = ps.executeQuery();
-            //用while处理结果集
-            while(resultSet.next()) {
-                int id = resultSet.getInt("id");
-                username = resultSet.getString("username");
-                int age = resultSet.getInt("age");
-                String email = resultSet.getString("email");
-                user = new User();
-                user.setId(id);
-                user.setUsername(username);
-                user.setAge(age);
-                user.setEmail(email);
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-        return user;
-    }
-
-    //通过bookName查询book对象，用手动的方法，给对象的每一个成员变量赋值，因为事先已经知道在查book
-    public static Book queryBook(String bookName) {
-        Book book = null;
-        String sql = "select id,book_name as bookName,author,press,price,stock,borrow_count as borrowCount from lib_book where book_name = ?";
-
-        try {
-            //预编译sql语句
-            PreparedStatement ps = connection.prepareStatement(sql);
-            //填充sql语句
-            ps.setObject(1,bookName);
-            //执行sql语句并返回结果集
-            ResultSet resultSet = ps.executeQuery();
-            //用while处理结果集
-            while(resultSet.next()) {
-                int id = resultSet.getInt("id");
-                bookName = resultSet.getString("bookName");
-                String author = resultSet.getString("author");
-                String press = resultSet.getString("press");
-                BigDecimal price = resultSet.getBigDecimal("price");
-                int stock = resultSet.getInt("stock");
-                int borrowCount = resultSet.getInt("borrowCount");
-
-                book = new Book();
-                book.setId(id);
-                book.setBookName(bookName);
-                book.setAuthor(author);
-                book.setPress(press);
-                book.setPrice(price);
-                book.setStock(stock);
-                book.setBorrowCount(borrowCount);
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-        return book;
-    }
 
     //通过userId和bookId查询借阅记录是不是1，用count也可以，我用的方法是返回查询，如果返回的结果集有东西，说明有记录
     public static BorrowRecord queryRecord(int userId, int bookId) {
+        Connection connection = ConnectionUtils.connectionThreadLocal.get();
         //初始化影响行数和preparedStatement
         BorrowRecord borrowRecord = null;
         PreparedStatement queryRecordPs = null;
@@ -314,11 +344,30 @@ public class DataBaseUtils {
      * @Date: 2020/7/16 15:26
      */
     //通用的东西会用到反射,用反射的方法，给对象的每一个成员变量赋值
-    public static <T> List<T> commonQuery(Class<T> clazz, String sql) {
+    public static <T> List<T> commonQuery(Class<T> clazz, String sql, List<PreparedParamDomain> params) {
+        Connection connection = ConnectionUtils.connectionThreadLocal.get();
+
+
         List<T> tList = new ArrayList();
+
+        //填充占位符
         try {
-            Statement statement = connection.createStatement();
-            ResultSet resultSet = statement.executeQuery(sql);
+            PreparedStatement preparedStatement = connection.prepareStatement(sql);
+            if(params != null) {
+                for (int index = 0; index<params.size(); index++){
+                    PreparedParamDomain param = params.get(index);
+                    if(param.getClazz() == String.class) {
+                        preparedStatement.setString(index+1,param.getValue().toString());
+                    }
+                    if(param.getClazz() == Integer.class) {
+                        preparedStatement.setInt(index+1,Integer.parseInt(param.getValue().toString()));
+                    }
+                    if(param.getClazz() == BigDecimal.class) {
+                        preparedStatement.setBigDecimal(index + 1, (BigDecimal) param.getValue());
+                    }
+                }
+            }
+            ResultSet resultSet = preparedStatement.executeQuery();
 
             //获取类的全部成员变量名字，根据变量的名字，方便从结果集字段里获取数据
             Field[] fields = clazz.getDeclaredFields();
